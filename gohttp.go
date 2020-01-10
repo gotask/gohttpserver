@@ -223,8 +223,9 @@ func main() {
 }
 
 type GoHttp struct {
-	C Configure
-	S *http.Server
+	C   Configure
+	S   *http.Server
+	Dir string
 }
 
 func (g *GoHttp) parseFlagsNew(dir, addr string, upload, del bool) error {
@@ -233,8 +234,8 @@ func (g *GoHttp) parseFlagsNew(dir, addr string, upload, del bool) error {
 	gcfg.Port = 8000
 	gcfg.Addr = addr
 	gcfg.Theme = "green"
-	gcfg.PlistProxy = defaultPlistProxy
-	gcfg.Auth.OpenID = defaultOpenID
+	//gcfg.PlistProxy = defaultPlistProxy
+	//gcfg.Auth.OpenID = defaultOpenID
 	gcfg.GoogleTrackerID = "UA-81212345-2"
 	gcfg.Title = "Go HTTP File Server"
 	gcfg.Upload = upload
@@ -270,6 +271,9 @@ func (g *GoHttp) parseFlagsNew(dir, addr string, upload, del bool) error {
 }
 
 func (g *GoHttp) Start(dir, addr string, upload, del bool, ctx context.Context) error {
+	if err := g.Stop(ctx); err != nil {
+		return err
+	}
 	if err := g.parseFlagsNew(dir, addr, upload, del); err != nil {
 		return err
 	}
@@ -327,6 +331,7 @@ func (g *GoHttp) Start(dir, addr string, upload, del bool, ctx context.Context) 
 		hdlr = handlers.ProxyHeaders(hdlr)
 	}
 
+	http.DefaultServeMux = &http.ServeMux{}
 	http.Handle("/", hdlr)
 	http.Handle("/-/assets/", http.StripPrefix("/-/assets/", http.FileServer(Assets)))
 	http.HandleFunc("/-/sysinfo", func(w http.ResponseWriter, r *http.Request) {
@@ -358,21 +363,24 @@ func (g *GoHttp) Start(dir, addr string, upload, del bool, ctx context.Context) 
 		close(c)
 	}()
 	g.S = server
+	g.Dir = gcfg.Root
+
+	ticker := time.NewTicker(time.Millisecond * 100)
+	defer ticker.Stop()
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-c:
+	case <-ticker.C:
 	}
 
 	return err
 }
 
-func (g *GoHttp) Stop() error {
+func (g *GoHttp) Stop(ctx context.Context) error {
 	if g.S == nil {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
 	if err := g.S.Shutdown(ctx); nil != err {
 		return err
 	}
