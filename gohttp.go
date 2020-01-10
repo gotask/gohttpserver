@@ -1,7 +1,8 @@
-package main
+package gohttpserver
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -14,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/alecthomas/kingpin"
 	accesslog "github.com/codeskyblue/go-accesslog"
@@ -163,7 +165,7 @@ func main() {
 	if ss.PlistProxy != "" {
 		log.Printf("plistproxy: %s", strconv.Quote(ss.PlistProxy))
 	}
-	
+
 	var hdlr http.Handler = ss
 
 	hdlr = accesslog.NewLoggingHandler(hdlr, logger)
@@ -218,4 +220,162 @@ func main() {
 		err = http.ListenAndServe(gcfg.Addr, nil)
 	}
 	log.Fatal(err)
+}
+
+type GoHttp struct {
+	C Configure
+	S *http.Server
+}
+
+func (g *GoHttp) parseFlagsNew(dir, addr string, upload, del bool) error {
+	// initial default conf
+	gcfg.Root = dir
+	gcfg.Port = 8000
+	gcfg.Addr = addr
+	gcfg.Theme = "green"
+	gcfg.PlistProxy = defaultPlistProxy
+	gcfg.Auth.OpenID = defaultOpenID
+	gcfg.GoogleTrackerID = "UA-81212345-2"
+	gcfg.Title = "Go HTTP File Server"
+	gcfg.Upload = upload
+	gcfg.Delete = del
+	gcfg.Debug = false
+
+	//gcfg.Conf            *os.File `yaml:"-"`
+	//gcfg.Addr            string   `yaml:"addr"`
+	//gcfg.Port            int      `yaml:"port"`
+	//gcfg.Root            string   `yaml:"root"`
+	//gcfg.HTTPAuth        string   `yaml:"httpauth"`
+	//gcfg.Cert            string   `yaml:"cert"`
+	//gcfg.Key             string   `yaml:"key"`
+	//gcfg.Cors            bool     `yaml:"cors"`
+	//gcfg.Theme           string   `yaml:"theme"`
+	//gcfg.XHeaders        bool     `yaml:"xheaders"`
+	//gcfg.Upload          bool     `yaml:"upload"`
+	//gcfg.Delete          bool     `yaml:"delete"`
+	//gcfg.PlistProxy      string   `yaml:"plistproxy"`
+	//gcfg.Title           string   `yaml:"title"`
+	//gcfg.Debug           bool     `yaml:"debug"`
+	//gcfg.GoogleTrackerID string   `yaml:"google-tracker-id"`
+	/*Auth            struct {
+		Type   string `yaml:"type"` // openid|http|github
+		OpenID string `yaml:"openid"`
+		HTTP   string `yaml:"http"`
+		ID     string `yaml:"id"`     // for oauth2
+		Secret string `yaml:"secret"` // for oauth2
+	} `yaml:"auth"`*/
+
+	g.C = gcfg
+	return nil
+}
+
+func (g *GoHttp) Start(dir, addr string, upload, del bool, ctx context.Context) error {
+	if err := g.parseFlagsNew(dir, addr, upload, del); err != nil {
+		return err
+	}
+	if gcfg.Debug {
+		data, _ := yaml.Marshal(gcfg)
+		fmt.Printf("--- config ---\n%s\n", string(data))
+	}
+	log.SetFlags(log.Lshortfile | log.LstdFlags)
+
+	ss := NewHTTPStaticServer(gcfg.Root)
+	ss.Theme = gcfg.Theme
+	ss.Title = gcfg.Title
+	ss.GoogleTrackerID = gcfg.GoogleTrackerID
+	ss.Upload = gcfg.Upload
+	ss.Delete = gcfg.Delete
+	ss.AuthType = gcfg.Auth.Type
+
+	if gcfg.PlistProxy != "" {
+		u, err := url.Parse(gcfg.PlistProxy)
+		if err != nil {
+			return err
+		}
+		u.Scheme = "https"
+		ss.PlistProxy = u.String()
+	}
+	if ss.PlistProxy != "" {
+		log.Printf("plistproxy: %s", strconv.Quote(ss.PlistProxy))
+	}
+
+	var hdlr http.Handler = ss
+
+	hdlr = accesslog.NewLoggingHandler(hdlr, logger)
+
+	// HTTP Basic Authentication
+	userpass := strings.SplitN(gcfg.Auth.HTTP, ":", 2)
+	switch gcfg.Auth.Type {
+	case "http":
+		if len(userpass) == 2 {
+			user, pass := userpass[0], userpass[1]
+			hdlr = httpauth.SimpleBasicAuth(user, pass)(hdlr)
+		}
+	case "openid":
+		handleOpenID(gcfg.Auth.OpenID, false) // FIXME(ssx): set secure default to false
+		// case "github":
+		// 	handleOAuth2ID(gcfg.Auth.Type, gcfg.Auth.ID, gcfg.Auth.Secret) // FIXME(ssx): set secure default to false
+	case "oauth2-proxy":
+		handleOauth2()
+	}
+
+	// CORS
+	if gcfg.Cors {
+		hdlr = handlers.CORS()(hdlr)
+	}
+	if gcfg.XHeaders {
+		hdlr = handlers.ProxyHeaders(hdlr)
+	}
+
+	http.Handle("/", hdlr)
+	http.Handle("/-/assets/", http.StripPrefix("/-/assets/", http.FileServer(Assets)))
+	http.HandleFunc("/-/sysinfo", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		data, _ := json.Marshal(map[string]interface{}{
+			"version": VERSION,
+		})
+		w.Write(data)
+	})
+
+	if gcfg.Addr == "" {
+		gcfg.Addr = fmt.Sprintf(":%d", gcfg.Port)
+	}
+	if !strings.Contains(gcfg.Addr, ":") {
+		gcfg.Addr = ":" + gcfg.Addr
+	}
+	_, port, _ := net.SplitHostPort(gcfg.Addr)
+	log.Printf("listening on %s, local address http://%s:%s\n", strconv.Quote(gcfg.Addr), getLocalIP(), port)
+
+	var err error
+	server := &http.Server{Addr: gcfg.Addr, Handler: nil}
+	c := make(chan int)
+	go func() {
+		if gcfg.Key != "" && gcfg.Cert != "" {
+			err = server.ListenAndServeTLS(gcfg.Cert, gcfg.Key)
+		} else {
+			err = server.ListenAndServe()
+		}
+		close(c)
+	}()
+	g.S = server
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-c:
+	}
+
+	return err
+}
+
+func (g *GoHttp) Stop() error {
+	if g.S == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := g.S.Shutdown(ctx); nil != err {
+		return err
+	}
+	g.S = nil
+	return nil
 }

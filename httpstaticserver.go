@@ -1,4 +1,4 @@
-package main
+package gohttpserver
 
 import (
 	"bytes"
@@ -169,8 +169,8 @@ func (s *HTTPStaticServer) hDelete(w http.ResponseWriter, req *http.Request) {
 	err := os.Remove(filepath.Join(s.Root, path))
 	if err != nil {
 		pathErr, ok := err.(*os.PathError)
-		if ok{
-			http.Error(w, pathErr.Op + " " + path + ": " + pathErr.Err.Error(), 500)
+		if ok {
+			http.Error(w, pathErr.Op+" "+path+": "+pathErr.Err.Error(), 500)
 		} else {
 			http.Error(w, err.Error(), 500)
 		}
