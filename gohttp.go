@@ -225,6 +225,7 @@ func main() {
 type GoHttp struct {
 	C   Configure
 	S   *http.Server
+	H   *http.ServeMux
 	Dir string
 }
 
@@ -331,10 +332,10 @@ func (g *GoHttp) Start(dir, addr string, upload, del bool, ctx context.Context) 
 		hdlr = handlers.ProxyHeaders(hdlr)
 	}
 
-	http.DefaultServeMux = &http.ServeMux{}
-	http.Handle("/", hdlr)
-	http.Handle("/-/assets/", http.StripPrefix("/-/assets/", http.FileServer(Assets)))
-	http.HandleFunc("/-/sysinfo", func(w http.ResponseWriter, r *http.Request) {
+	g.H = &http.ServeMux{}
+	g.H.Handle("/", hdlr)
+	g.H.Handle("/-/assets/", http.StripPrefix("/-/assets/", http.FileServer(Assets)))
+	g.H.HandleFunc("/-/sysinfo", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		data, _ := json.Marshal(map[string]interface{}{
 			"version": VERSION,
@@ -352,7 +353,7 @@ func (g *GoHttp) Start(dir, addr string, upload, del bool, ctx context.Context) 
 	log.Printf("listening on %s, local address http://%s:%s\n", strconv.Quote(gcfg.Addr), getLocalIP(), port)
 
 	var err error
-	server := &http.Server{Addr: gcfg.Addr, Handler: nil}
+	server := &http.Server{Addr: gcfg.Addr, Handler: g.H}
 	c := make(chan int)
 	go func() {
 		if gcfg.Key != "" && gcfg.Cert != "" {
