@@ -1,3 +1,15 @@
+#Fork from github.com/codeskyblue/gohttpserver
+#UseAge
+```
+Http := &gohttpserver.GoHttp{}
+ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond*500)
+defer cancel()
+if err := Http.Start(".", "0.0.0.0:8080", true, false, ctx); nil != err {
+	return err
+}
+Http.Stop()
+```
+
 # gohttpserver
 [![Build Status](https://travis-ci.org/codeskyblue/gohttpserver.svg?branch=master)](https://travis-ci.org/codeskyblue/gohttpserver)
 [![](https://images.microbadger.com/badges/image/codeskyblue/gohttpserver.svg)](https://microbadger.com/images/codeskyblue/gohttpserver "Get your own image badge on microbadger.com")
