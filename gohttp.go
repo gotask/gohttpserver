@@ -334,12 +334,30 @@ func (g *GoHttp) Start(dir, addr string, upload, del bool, ctx context.Context) 
 
 	g.H = &http.ServeMux{}
 	g.H.Handle("/", hdlr)
-	g.H.Handle("/-/assets/", http.StripPrefix("/-/assets/", http.FileServer(Assets)))
+	g.H.Handle("/-/assets/", http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
+		if strings.HasSuffix(req.URL.Path, ".css") {
+			resp.Header().Set("content-type", "text/css; charset=utf-8")
+		}
+		http.StripPrefix("/-/assets/", http.FileServer(Assets)).ServeHTTP(resp, req)
+	}))
+	//g.H.Handle("/-/assets/", http.StripPrefix("/-/assets/", http.FileServer(Assets)))
 	g.H.HandleFunc("/-/sysinfo", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		data, _ := json.Marshal(map[string]interface{}{
 			"version": VERSION,
 		})
+		w.Write(data)
+	})
+
+	g.H.HandleFunc("/-/user", func(w http.ResponseWriter, r *http.Request) {
+		user := &UserInfo{
+			Email:    "xxx@email",
+			Name:     "xxx",
+			NickName: "xxx",
+		}
+
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		data, _ := json.Marshal(user)
 		w.Write(data)
 	})
 
